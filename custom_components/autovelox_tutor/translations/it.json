@@ -1,0 +1,100 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Autovelox & Tutor Italia",
+        "description": "Seleziona le regioni da monitorare e il giorno di aggiornamento settimanale.\n\nI dati provengono dalla Polizia di Stato - Servizio Polizia Stradale.",
+        "data": {
+          "regions": "Regioni da monitorare",
+          "update_day": "Giorno di aggiornamento",
+          "update_hour": "Ora di aggiornamento (0-23)"
+        }
+      },
+      "geocoding": {
+        "title": "Configurazione Geocoding",
+        "description": "{description}",
+        "data": {
+          "geocoding_provider": "Provider geocoding"
+        }
+      },
+      "google_api_key": {
+        "title": "Chiave API Google Maps",
+        "description": "{instructions}",
+        "data": {
+          "google_api_key": "Chiave API Google (lascia vuoto per usare solo OpenStreetMap)"
+        }
+      },
+      "mymaps": {
+        "title": "Export Google My Maps",
+        "description": "{description}",
+        "data": {
+          "export_mymaps": "Abilita salvataggio automatico su Google My Maps"
+        }
+      },
+      "google_oauth": {
+        "title": "Autorizzazione Google",
+        "description": "{instructions}",
+        "data": {}
+      }
+    },
+    "error": {
+      "no_regions_selected": "Seleziona almeno una regione.",
+      "invalid_google_api_key": "Chiave API Google non valida o non autorizzata per il Geocoding.",
+      "oauth_failed": "Autorizzazione Google fallita. Riprova."
+    },
+    "abort": {
+      "already_configured": "Autovelox & Tutor è già configurato."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Modifica configurazione",
+        "data": {
+          "regions": "Regioni monitorate",
+          "update_day": "Giorno di aggiornamento",
+          "update_hour": "Ora di aggiornamento"
+        }
+      }
+    }
+  },
+  "services": {
+    "aggiorna": {
+      "name": "Aggiorna dati",
+      "description": "Forza un aggiornamento immediato dei dati autovelox e tutor.",
+      "fields": {
+        "region": {
+          "name": "Regione",
+          "description": "Regione specifica da aggiornare (opzionale, es: 'marche'). Se non specificata, aggiorna tutte."
+        }
+      }
+    },
+    "scarica_kml": {
+      "name": "Scarica KML",
+      "description": "Genera un file KML con tutti i punti velox e tutor, salvato in /config/www/.",
+      "fields": {
+        "region": {
+          "name": "Regione",
+          "description": "Regione per cui generare il KML (es: 'marche')."
+        }
+      }
+    },
+    "esporta_mymaps": {
+      "name": "Esporta su Google My Maps",
+      "description": "Forza l'esportazione dei punti su Google My Maps."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "velox_attivi": {
+        "name": "Velox Attivi"
+      },
+      "tutor_attivi": {
+        "name": "Tutor Attivi"
+      },
+      "ultimo_aggiornamento": {
+        "name": "Ultimo Aggiornamento"
+      }
+    }
+  }
+}

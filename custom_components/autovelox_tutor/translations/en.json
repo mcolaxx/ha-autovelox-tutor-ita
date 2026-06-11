@@ -1,0 +1,87 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Autovelox & Tutor Italy",
+        "description": "Select the Italian regions to monitor and the weekly update schedule.\n\nData source: Polizia di Stato - Servizio Polizia Stradale.",
+        "data": {
+          "regions": "Regions to monitor",
+          "update_day": "Update day of the week",
+          "update_hour": "Update hour (0-23)"
+        }
+      },
+      "geocoding": {
+        "title": "Geocoding Configuration",
+        "description": "{description}",
+        "data": {
+          "geocoding_provider": "Geocoding provider"
+        }
+      },
+      "google_api_key": {
+        "title": "Google Maps API Key",
+        "description": "{instructions}",
+        "data": {
+          "google_api_key": "Google API Key (leave empty to use OpenStreetMap only)"
+        }
+      },
+      "mymaps": {
+        "title": "Google My Maps Export",
+        "description": "{description}",
+        "data": {
+          "export_mymaps": "Enable automatic saving to Google My Maps"
+        }
+      },
+      "google_oauth": {
+        "title": "Google Authorization",
+        "description": "{instructions}",
+        "data": {}
+      }
+    },
+    "error": {
+      "no_regions_selected": "Please select at least one region.",
+      "invalid_google_api_key": "Invalid or unauthorized Google API key for Geocoding.",
+      "oauth_failed": "Google authorization failed. Please try again."
+    },
+    "abort": {
+      "already_configured": "Autovelox & Tutor is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Update configuration",
+        "data": {
+          "regions": "Monitored regions",
+          "update_day": "Update day",
+          "update_hour": "Update hour"
+        }
+      }
+    }
+  },
+  "services": {
+    "aggiorna": {
+      "name": "Refresh data",
+      "description": "Force an immediate refresh of speed camera and tutor data.",
+      "fields": {
+        "region": {
+          "name": "Region",
+          "description": "Specific region to update (optional, e.g. 'marche'). If omitted, updates all regions."
+        }
+      }
+    },
+    "scarica_kml": {
+      "name": "Download KML",
+      "description": "Generate a KML file with all speed camera and tutor points, saved to /config/www/.",
+      "fields": {
+        "region": {
+          "name": "Region",
+          "description": "Region for which to generate the KML (e.g. 'marche')."
+        }
+      }
+    },
+    "esporta_mymaps": {
+      "name": "Export to Google My Maps",
+      "description": "Force export of all points to Google My Maps."
+    }
+  }
+}
