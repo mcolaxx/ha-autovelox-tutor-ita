@@ -32,6 +32,14 @@
         }
       },
       "google_oauth": {
+        "title": "Credenziali Google OAuth",
+        "description": "{instructions}",
+        "data": {
+          "google_client_id": "Client ID",
+          "google_client_secret": "Client Secret"
+        }
+      },
+      "google_oauth_device": {
         "title": "Autorizzazione Google",
         "description": "{instructions}",
         "data": {}
@@ -40,14 +48,16 @@
         "title": "Verifica autorizzazione",
         "description": "{error}",
         "data": {
-          "retry": "Cosa vuoi fare?"
+          "retry_choice": "Cosa vuoi fare?"
         }
       }
     },
     "error": {
       "no_regions_selected": "Seleziona almeno una regione.",
       "invalid_google_api_key": "Chiave API Google non valida o non autorizzata per il Geocoding.",
-      "oauth_failed": "Autorizzazione Google fallita. Riprova."
+      "oauth_failed": "Autorizzazione Google fallita. Riprova.",
+      "missing_oauth_credentials": "Inserisci sia Client ID che Client Secret.",
+      "oauth_device_error": "Impossibile avviare l'autorizzazione Google. Verifica le credenziali."
     },
     "abort": {
       "already_configured": "Autovelox & Tutor è già configurato."

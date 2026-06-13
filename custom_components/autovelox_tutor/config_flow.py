@@ -15,6 +15,19 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.selector import (
+    BooleanSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
 from .const import (
     CONF_EXPORT_MYMAPS,
@@ -36,11 +49,51 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+# --------------------------------------------------------------------------- #
+#  Helper: costruisce le opzioni regione per il SelectSelector                #
+# --------------------------------------------------------------------------- #
+
+def _region_select_options() -> list[SelectOptionDict]:
+    """Lista di {value, label} per il selettore multi-regione, ordinata per nome."""
+    return [
+        SelectOptionDict(value=k, label=REGION_DISPLAY_NAMES[k])
+        for k in sorted(REGION_PDF_MAP.keys(), key=lambda r: REGION_DISPLAY_NAMES[r])
+    ]
+
+
+def _weekday_select_options() -> list[SelectOptionDict]:
+    """Lista di {value, label} per il selettore giorno settimana."""
+    return [
+        SelectOptionDict(value=k, label=WEEKDAY_DISPLAY[k])
+        for k in WEEKDAY_OPTIONS
+    ]
+
+
+def _geocoding_provider_options() -> list[SelectOptionDict]:
+    return [
+        SelectOptionDict(
+            value=GEO_PROVIDER_OSM,
+            label="OpenStreetMap / Nominatim (gratuito, nessuna chiave)",
+        ),
+        SelectOptionDict(
+            value=GEO_PROVIDER_GOOGLE,
+            label="Google Maps Geocoding API (richiede chiave API)",
+        ),
+        SelectOptionDict(
+            value=GEO_PROVIDER_BOTH,
+            label="Entrambi: OSM prima, Google come fallback (consigliato)",
+        ),
+    ]
+
+
 class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Flusso di configurazione a più step."""
 
     VERSION = 1
-    _user_input: dict = {}
+
+    def __init__(self) -> None:
+        """Inizializza lo stato del flow (per-istanza, non di classe!)."""
+        self._user_input: dict[str, Any] = {}
 
     async def async_step_user(
         self, user_input: Optional[dict[str, Any]] = None
@@ -58,29 +111,29 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._user_input.update(user_input)
                 return await self.async_step_geocoding()
 
-        # Opzioni regioni per la UI (multi-select)
-        region_options = {
-            k: REGION_DISPLAY_NAMES[k]
-            for k in sorted(REGION_PDF_MAP.keys(), key=lambda r: REGION_DISPLAY_NAMES[r])
-        }
+        data_schema = vol.Schema({
+            vol.Required(CONF_REGIONS): SelectSelector(
+                SelectSelectorConfig(
+                    options=_region_select_options(),
+                    multiple=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Required(CONF_UPDATE_DAY, default="lunedi"): SelectSelector(
+                SelectSelectorConfig(
+                    options=_weekday_select_options(),
+                    multiple=False,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Required(CONF_UPDATE_HOUR, default=6): NumberSelector(
+                NumberSelectorConfig(min=0, max=23, step=1, mode=NumberSelectorMode.BOX)
+            ),
+        })
 
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({
-                vol.Required(CONF_REGIONS): vol.All(
-                    # In HA config flow i multi-select si fanno con cv.multi_select
-                    # Qui usiamo una lista di stringhe
-                    list,
-                    vol.Length(min=1),
-                    [vol.In(region_options)],
-                ),
-                vol.Required(CONF_UPDATE_DAY, default="lunedi"): vol.In(
-                    {k: WEEKDAY_DISPLAY[k] for k in WEEKDAY_OPTIONS}
-                ),
-                vol.Required(CONF_UPDATE_HOUR, default=6): vol.All(
-                    vol.Coerce(int), vol.Range(min=0, max=23)
-                ),
-            }),
+            data_schema=data_schema,
             description_placeholders={
                 "description": (
                     "Seleziona le regioni da monitorare. "
@@ -103,15 +156,19 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_google_api_key()
             return await self.async_step_mymaps()
 
+        data_schema = vol.Schema({
+            vol.Required(CONF_GEOCODING_PROVIDER, default=GEO_PROVIDER_BOTH): SelectSelector(
+                SelectSelectorConfig(
+                    options=_geocoding_provider_options(),
+                    multiple=False,
+                    mode=SelectSelectorMode.LIST,
+                )
+            ),
+        })
+
         return self.async_show_form(
             step_id="geocoding",
-            data_schema=vol.Schema({
-                vol.Required(CONF_GEOCODING_PROVIDER, default=GEO_PROVIDER_BOTH): vol.In({
-                    GEO_PROVIDER_OSM: "OpenStreetMap / Nominatim (gratuito, nessuna chiave)",
-                    GEO_PROVIDER_GOOGLE: "Google Maps Geocoding API (richiede chiave API)",
-                    GEO_PROVIDER_BOTH: "Entrambi: OSM prima, Google come fallback (consigliato)",
-                }),
-            }),
+            data_schema=data_schema,
             description_placeholders={
                 "description": (
                     "Il geocoding converte i nomi delle strade in coordinate GPS. "
@@ -130,9 +187,8 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            api_key = user_input.get(CONF_GOOGLE_API_KEY, "").strip()
+            api_key = (user_input.get(CONF_GOOGLE_API_KEY) or "").strip()
             if api_key:
-                # Verifica rapidamente la chiave
                 valid = await self._test_google_api_key(api_key)
                 if not valid:
                     errors[CONF_GOOGLE_API_KEY] = "invalid_google_api_key"
@@ -140,15 +196,19 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._user_input[CONF_GOOGLE_API_KEY] = api_key
                     return await self.async_step_mymaps()
             else:
-                # Chiave vuota: torna a OSM only
+                # Chiave vuota: usa solo OSM
                 self._user_input[CONF_GEOCODING_PROVIDER] = GEO_PROVIDER_OSM
                 return await self.async_step_mymaps()
 
+        data_schema = vol.Schema({
+            vol.Optional(CONF_GOOGLE_API_KEY, default=""): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.PASSWORD)
+            ),
+        })
+
         return self.async_show_form(
             step_id="google_api_key",
-            data_schema=vol.Schema({
-                vol.Optional(CONF_GOOGLE_API_KEY, default=""): str,
-            }),
+            data_schema=data_schema,
             description_placeholders={
                 "instructions": (
                     "1. Vai su https://console.cloud.google.com\n"
@@ -173,14 +233,15 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             export = user_input.get(CONF_EXPORT_MYMAPS, False)
             if export:
                 return await self.async_step_google_oauth()
-            # Crea entry senza OAuth
             return self._create_entry()
+
+        data_schema = vol.Schema({
+            vol.Required(CONF_EXPORT_MYMAPS, default=False): BooleanSelector(),
+        })
 
         return self.async_show_form(
             step_id="mymaps",
-            data_schema=vol.Schema({
-                vol.Required(CONF_EXPORT_MYMAPS, default=False): bool,
-            }),
+            data_schema=data_schema,
             description_placeholders={
                 "description": (
                     "Abilitando questa opzione, i punti velox e tutor "
@@ -196,51 +257,112 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: Optional[dict[str, Any]] = None
     ) -> FlowResult:
         """
-        Step 5: Avvia Device Authorization Flow Google.
-        Mostra il codice che l'utente deve inserire su google.com/device
+        Step 5: Inserimento credenziali OAuth + avvio Device Authorization Flow.
+
+        NOTA: Google richiede un Client ID / Client Secret OAuth2 (tipo
+        "Applicazione desktop") creato su Google Cloud Console. Li chiediamo
+        qui prima di avviare il device flow.
+        """
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            client_id = (user_input.get("google_client_id") or "").strip()
+            client_secret = (user_input.get("google_client_secret") or "").strip()
+
+            if not client_id or not client_secret:
+                errors["base"] = "missing_oauth_credentials"
+            else:
+                self._user_input["google_client_id"] = client_id
+                self._user_input["google_client_secret"] = client_secret
+                return await self.async_step_google_oauth_device()
+
+        data_schema = vol.Schema({
+            vol.Required("google_client_id"): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.TEXT)
+            ),
+            vol.Required("google_client_secret"): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.PASSWORD)
+            ),
+        })
+
+        return self.async_show_form(
+            step_id="google_oauth",
+            data_schema=data_schema,
+            description_placeholders={
+                "instructions": (
+                    "Per esportare su Google My Maps è necessario un OAuth "
+                    "Client ID di tipo 'Applicazione desktop':\n\n"
+                    "1. Vai su https://console.cloud.google.com\n"
+                    "2. Crea/seleziona un progetto\n"
+                    "3. Abilita 'Google Drive API'\n"
+                    "4. Credenziali → Crea credenziali → ID client OAuth 2.0\n"
+                    "5. Tipo applicazione: 'Applicazione desktop'\n"
+                    "6. Copia Client ID e Client Secret qui sotto"
+                )
+            },
+            errors=errors,
+        )
+
+    async def async_step_google_oauth_device(
+        self, user_input: Optional[dict[str, Any]] = None
+    ) -> FlowResult:
+        """
+        Step 5b: Avvia il Device Authorization Flow e mostra il codice utente.
         """
         if user_input is not None:
-            # L'utente ha confermato: proviamo il polling ora
             return await self.async_step_google_oauth_poll()
 
-        # Avvia il device flow per ottenere user_code
         from .google_maps import OAUTH_SCOPES
+        import aiohttp
 
         client_id = self._user_input.get("google_client_id", "")
         client_secret = self._user_input.get("google_client_secret", "")
 
-        device_info = {}
-        if client_id and client_secret:
-            try:
-                import aiohttp
-                async with aiohttp.ClientSession() as session:
-                    params = {
-                        "client_id": client_id,
-                        "scope": " ".join(OAUTH_SCOPES),
-                    }
-                    async with session.post(
-                        "https://oauth2.googleapis.com/device/code",
-                        data=params,
-                    ) as resp:
-                        device_info = await resp.json()
-            except Exception as exc:
-                _LOGGER.warning("Device flow fallito: %s", exc)
+        device_info: dict[str, Any] = {}
+        try:
+            async with aiohttp.ClientSession() as session:
+                params = {
+                    "client_id": client_id,
+                    "scope": " ".join(OAUTH_SCOPES),
+                }
+                async with session.post(
+                    "https://oauth2.googleapis.com/device/code",
+                    data=params,
+                ) as resp:
+                    device_info = await resp.json()
+        except Exception as exc:
+            _LOGGER.warning("Device flow fallito: %s", exc)
+
+        if device_info.get("error"):
+            return self.async_show_form(
+                step_id="google_oauth_device",
+                data_schema=vol.Schema({}),
+                description_placeholders={
+                    "instructions": (
+                        f"Errore avvio autorizzazione Google: "
+                        f"{device_info.get('error_description', device_info['error'])}\n\n"
+                        "Verifica Client ID/Secret e riprova."
+                    ),
+                    "user_code": "—",
+                    "verify_url": "—",
+                },
+                errors={"base": "oauth_device_error"},
+            )
 
         user_code = device_info.get("user_code", "N/D")
-        verify_url = device_info.get("verification_url", "https://google.com/device")
+        verify_url = device_info.get("verification_url", "https://www.google.com/device")
         if device_info.get("device_code"):
             self._user_input["_device_code"] = device_info["device_code"]
-            self._user_input["_device_code_secret"] = client_secret
 
         return self.async_show_form(
-            step_id="google_oauth",
+            step_id="google_oauth_device",
             data_schema=vol.Schema({}),
             description_placeholders={
                 "user_code": user_code,
                 "verify_url": verify_url,
                 "instructions": (
                     f"1. Apri {verify_url}\n"
-                    f"2. Inserisci il codice: **{user_code}**\n"
+                    f"2. Inserisci il codice: {user_code}\n"
                     "3. Accedi con il tuo account Google e clicca 'Consenti'\n"
                     "4. Torna qui e clicca 'Avanti' per completare"
                 ),
@@ -251,16 +373,20 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: Optional[dict[str, Any]] = None
     ) -> FlowResult:
         """
-        Step 5b: Polling del token OAuth dopo che l'utente ha autorizzato.
-        Tenta fino a 3 volte con 2 secondi di attesa tra i tentativi.
+        Step 5c: Polling del token OAuth dopo che l'utente ha autorizzato.
+        Tenta fino a 5 volte con 2 secondi di attesa tra i tentativi.
         """
-        import asyncio, aiohttp, json, time
+        import asyncio
+        import json
+        import time
+
+        import aiohttp
 
         device_code = self._user_input.get("_device_code", "")
         client_id = self._user_input.get("google_client_id", "")
-        client_secret = self._user_input.get("_device_code_secret", "")
+        client_secret = self._user_input.get("google_client_secret", "")
 
-        token_data = {}
+        token_data: dict[str, Any] = {}
         if device_code and client_id and client_secret:
             params = {
                 "client_id": client_id,
@@ -268,7 +394,7 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "device_code": device_code,
                 "grant_type": "urn:ietf:params:oauth2:grant-type:device_code",
             }
-            for attempt in range(3):
+            for _ in range(5):
                 try:
                     async with aiohttp.ClientSession() as session:
                         async with session.post(
@@ -276,13 +402,14 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         ) as resp:
                             token_data = await resp.json()
 
-                    error = token_data.get("error", "")
                     if token_data.get("access_token"):
                         break
+
+                    error = token_data.get("error", "")
                     if error == "authorization_pending":
                         await asyncio.sleep(2)
                         continue
-                    # Errore definitivo
+
                     _LOGGER.warning("OAuth polling errore: %s", error)
                     break
                 except Exception as exc:
@@ -290,29 +417,34 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     await asyncio.sleep(2)
 
         if token_data.get("access_token"):
-            # Salva token nel config entry data
             token_data["obtained_at"] = time.time()
             self._user_input["_google_token"] = json.dumps(token_data)
-            # Pulisci dati temporanei
             self._user_input.pop("_device_code", None)
-            self._user_input.pop("_device_code_secret", None)
             _LOGGER.info("Google OAuth completato con successo")
             return self._create_entry()
 
-        # Token non ottenuto: mostra errore ma permetti di procedere senza
+        # Token non ottenuto: mostra schermata con scelta retry/skip
+        data_schema = vol.Schema({
+            vol.Required("retry_choice", default="retry"): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(value="retry", label="Riprova (ho appena autorizzato)"),
+                        SelectOptionDict(value="skip", label="Salta (configura My Maps in seguito)"),
+                    ],
+                    multiple=False,
+                    mode=SelectSelectorMode.LIST,
+                )
+            ),
+        })
+
         return self.async_show_form(
             step_id="google_oauth_poll",
-            data_schema=vol.Schema({
-                vol.Required("retry", default="retry"): vol.In({
-                    "retry": "Riprova (ho appena autorizzato)",
-                    "skip": "Salta (configura My Maps in seguito)",
-                }),
-            }),
+            data_schema=data_schema,
             description_placeholders={
                 "error": (
                     "Autorizzazione non ancora ricevuta o scaduta.\n"
                     "Assicurati di aver completato l'autorizzazione su Google, "
-                    "poi clicca 'Riprova'."
+                    "poi seleziona 'Riprova'."
                 )
             },
             errors={"base": "oauth_pending"},
@@ -321,9 +453,14 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_google_oauth_poll_submit(
         self, user_input: Optional[dict[str, Any]] = None
     ) -> FlowResult:
-        """Gestisce la scelta retry/skip dal form di polling."""
-        if user_input and user_input.get("retry") == "skip":
+        """Gestisce la scelta retry/skip dal form di polling (vedi async_step_google_oauth_poll)."""
+        # In HA il submit di una form richiama lo stesso step_id, quindi
+        # questo metodo non viene normalmente raggiunto: la logica di
+        # retry/skip è gestita direttamente in async_step_google_oauth_poll
+        # quando user_input è presente. Lasciato per compatibilità.
+        if user_input and user_input.get("retry_choice") == "skip":
             self._user_input[CONF_EXPORT_MYMAPS] = False
+            self._user_input.pop("_device_code", None)
             return self._create_entry()
         return await self.async_step_google_oauth_poll()
 
@@ -344,7 +481,6 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _create_entry(self) -> FlowResult:
         """Crea la config entry finale."""
-        # Rimuovi dati temporanei
         self._user_input.pop("_device_code", None)
 
         return self.async_create_entry(
@@ -393,22 +529,27 @@ class AutoveloxOptionsFlow(config_entries.OptionsFlow):
         current_day = self.config_entry.data.get(CONF_UPDATE_DAY, "lunedi")
         current_hour = self.config_entry.data.get(CONF_UPDATE_HOUR, 6)
 
-        region_options = {
-            k: REGION_DISPLAY_NAMES[k]
-            for k in sorted(REGION_PDF_MAP.keys(), key=lambda r: REGION_DISPLAY_NAMES[r])
-        }
+        data_schema = vol.Schema({
+            vol.Required(CONF_REGIONS, default=current_regions): SelectSelector(
+                SelectSelectorConfig(
+                    options=_region_select_options(),
+                    multiple=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Required(CONF_UPDATE_DAY, default=current_day): SelectSelector(
+                SelectSelectorConfig(
+                    options=_weekday_select_options(),
+                    multiple=False,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Required(CONF_UPDATE_HOUR, default=current_hour): NumberSelector(
+                NumberSelectorConfig(min=0, max=23, step=1, mode=NumberSelectorMode.BOX)
+            ),
+        })
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema({
-                vol.Required(CONF_REGIONS, default=current_regions): vol.All(
-                    list, [vol.In(region_options)]
-                ),
-                vol.Required(CONF_UPDATE_DAY, default=current_day): vol.In(
-                    {k: WEEKDAY_DISPLAY[k] for k in WEEKDAY_OPTIONS}
-                ),
-                vol.Required(CONF_UPDATE_HOUR, default=current_hour): vol.All(
-                    vol.Coerce(int), vol.Range(min=0, max=23)
-                ),
-            }),
+            data_schema=data_schema,
         )
