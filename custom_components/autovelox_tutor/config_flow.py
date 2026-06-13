@@ -374,7 +374,15 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """
         Step 5c: Polling del token OAuth dopo che l'utente ha autorizzato.
-        Tenta fino a 5 volte con 2 secondi di attesa tra i tentativi.
+
+        Se questo step viene richiamato con user_input (l'utente ha
+        risposto al form retry/skip mostrato in precedenza), gestiamo
+        prima quella scelta:
+          - "skip": disabilita My Maps e completa la configurazione
+          - "retry" (o assenza di scelta): rifà il polling
+
+        Se invece user_input è None (prima chiamata), fa direttamente
+        un primo tentativo di polling.
         """
         import asyncio
         import json
@@ -382,11 +390,19 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         import aiohttp
 
+        # L'utente ha risposto al form retry/skip
+        if user_input is not None and user_input.get("retry_choice") == "skip":
+            self._user_input[CONF_EXPORT_MYMAPS] = False
+            self._user_input.pop("_device_code", None)
+            _LOGGER.info("Export My Maps saltato dall'utente")
+            return self._create_entry()
+
         device_code = self._user_input.get("_device_code", "")
         client_id = self._user_input.get("google_client_id", "")
         client_secret = self._user_input.get("google_client_secret", "")
 
         token_data: dict[str, Any] = {}
+        last_error = ""
         if device_code and client_id and client_secret:
             params = {
                 "client_id": client_id,
@@ -405,16 +421,19 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if token_data.get("access_token"):
                         break
 
-                    error = token_data.get("error", "")
-                    if error == "authorization_pending":
+                    last_error = token_data.get("error", "")
+                    if last_error == "authorization_pending":
                         await asyncio.sleep(2)
                         continue
 
-                    _LOGGER.warning("OAuth polling errore: %s", error)
+                    _LOGGER.warning("OAuth polling errore: %s", last_error)
                     break
                 except Exception as exc:
                     _LOGGER.warning("OAuth polling exception: %s", exc)
+                    last_error = "network_error"
                     await asyncio.sleep(2)
+        else:
+            last_error = "missing_device_code"
 
         if token_data.get("access_token"):
             token_data["obtained_at"] = time.time()
@@ -423,7 +442,39 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.info("Google OAuth completato con successo")
             return self._create_entry()
 
-        # Token non ottenuto: mostra schermata con scelta retry/skip
+        # Token non ottenuto: costruisci un messaggio chiaro in base all'errore
+        if last_error == "authorization_pending":
+            error_message = (
+                "Autorizzazione non ancora ricevuta.\n"
+                "Assicurati di aver completato i passaggi su Google "
+                "(apri il link, inserisci il codice, clicca 'Consenti'), "
+                "poi seleziona 'Riprova'."
+            )
+        elif last_error in ("expired_token", "access_denied"):
+            error_message = (
+                "Il codice di autorizzazione è scaduto o l'accesso è stato negato.\n\n"
+                "Cause comuni con account Google di test:\n"
+                "- l'app OAuth è in modalità 'Testing' e il tuo account "
+                "non è stato aggiunto come 'Test user' nella schermata "
+                "di consenso OAuth (Google Cloud Console)\n"
+                "- sono passati troppi minuti dalla generazione del codice\n\n"
+                "Seleziona 'Salta' per completare la configurazione senza "
+                "My Maps, oppure correggi le impostazioni su Google Cloud "
+                "Console e poi 'Riprova' (verrà generato un nuovo codice "
+                "solo se riapri questo step da capo)."
+            )
+        elif last_error == "missing_device_code":
+            error_message = (
+                "Codice di autorizzazione mancante (sessione persa).\n"
+                "Seleziona 'Salta' e riprova l'intera configurazione "
+                "dall'inizio se vuoi attivare My Maps."
+            )
+        else:
+            error_message = (
+                f"Errore durante l'autorizzazione: {last_error or 'sconosciuto'}.\n"
+                "Seleziona 'Riprova' oppure 'Salta' per continuare senza My Maps."
+            )
+
         data_schema = vol.Schema({
             vol.Required("retry_choice", default="retry"): SelectSelector(
                 SelectSelectorConfig(
@@ -440,29 +491,9 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="google_oauth_poll",
             data_schema=data_schema,
-            description_placeholders={
-                "error": (
-                    "Autorizzazione non ancora ricevuta o scaduta.\n"
-                    "Assicurati di aver completato l'autorizzazione su Google, "
-                    "poi seleziona 'Riprova'."
-                )
-            },
+            description_placeholders={"error": error_message},
             errors={"base": "oauth_pending"},
         )
-
-    async def async_step_google_oauth_poll_submit(
-        self, user_input: Optional[dict[str, Any]] = None
-    ) -> FlowResult:
-        """Gestisce la scelta retry/skip dal form di polling (vedi async_step_google_oauth_poll)."""
-        # In HA il submit di una form richiama lo stesso step_id, quindi
-        # questo metodo non viene normalmente raggiunto: la logica di
-        # retry/skip è gestita direttamente in async_step_google_oauth_poll
-        # quando user_input è presente. Lasciato per compatibilità.
-        if user_input and user_input.get("retry_choice") == "skip":
-            self._user_input[CONF_EXPORT_MYMAPS] = False
-            self._user_input.pop("_device_code", None)
-            return self._create_entry()
-        return await self.async_step_google_oauth_poll()
 
     # ------------------------------------------------------------------ #
     #  Options Flow (modifica configurazione esistente)                   #
