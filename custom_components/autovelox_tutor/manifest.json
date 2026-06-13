@@ -4,9 +4,7 @@
   "version": "1.0.0",
   "documentation": "https://github.com/mcolaxx/ha-autovelox-tutor-ita",
   "issue_tracker": "https://github.com/mcolaxx/ha-autovelox-tutor-ita/issues",
-  "codeowners": [
-    "@mcolaxx"
-  ],
+  "codeowners": ["@mcolaxx"],
   "requirements": [
     "pdfplumber==0.11.0",
     "aiohttp>=3.9.1",

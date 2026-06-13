@@ -200,16 +200,12 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         Mostra il codice che l'utente deve inserire su google.com/device
         """
         if user_input is not None:
-            # L'utente ha confermato di aver autorizzato
-            # Il polling viene fatto dal coordinator al primo avvio
-            return self._create_entry()
+            # L'utente ha confermato: proviamo il polling ora
+            return await self.async_step_google_oauth_poll()
 
         # Avvia il device flow per ottenere user_code
-        from .google_maps import GoogleOAuthManager, OAUTH_SCOPES
-        import os
+        from .google_maps import OAUTH_SCOPES
 
-        # Usa client_id/secret di default (l'utente deve averli configurati
-        # oppure usiamo quelli dell'integrazione)
         client_id = self._user_input.get("google_client_id", "")
         client_secret = self._user_input.get("google_client_secret", "")
 
@@ -232,9 +228,9 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         user_code = device_info.get("user_code", "N/D")
         verify_url = device_info.get("verification_url", "https://google.com/device")
-        # Salva device_code per il polling
         if device_info.get("device_code"):
             self._user_input["_device_code"] = device_info["device_code"]
+            self._user_input["_device_code_secret"] = client_secret
 
         return self.async_show_form(
             step_id="google_oauth",
@@ -244,13 +240,92 @@ class AutoveloxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "verify_url": verify_url,
                 "instructions": (
                     f"1. Apri {verify_url}\n"
-                    f"2. Inserisci il codice: {user_code}\n"
-                    "3. Accedi con il tuo account Google\n"
-                    "4. Clicca 'Consenti'\n"
-                    "5. Torna qui e clicca 'Avanti'"
+                    f"2. Inserisci il codice: **{user_code}**\n"
+                    "3. Accedi con il tuo account Google e clicca 'Consenti'\n"
+                    "4. Torna qui e clicca 'Avanti' per completare"
                 ),
             },
         )
+
+    async def async_step_google_oauth_poll(
+        self, user_input: Optional[dict[str, Any]] = None
+    ) -> FlowResult:
+        """
+        Step 5b: Polling del token OAuth dopo che l'utente ha autorizzato.
+        Tenta fino a 3 volte con 2 secondi di attesa tra i tentativi.
+        """
+        import asyncio, aiohttp, json, time
+
+        device_code = self._user_input.get("_device_code", "")
+        client_id = self._user_input.get("google_client_id", "")
+        client_secret = self._user_input.get("_device_code_secret", "")
+
+        token_data = {}
+        if device_code and client_id and client_secret:
+            params = {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "device_code": device_code,
+                "grant_type": "urn:ietf:params:oauth2:grant-type:device_code",
+            }
+            for attempt in range(3):
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            "https://oauth2.googleapis.com/token", data=params
+                        ) as resp:
+                            token_data = await resp.json()
+
+                    error = token_data.get("error", "")
+                    if token_data.get("access_token"):
+                        break
+                    if error == "authorization_pending":
+                        await asyncio.sleep(2)
+                        continue
+                    # Errore definitivo
+                    _LOGGER.warning("OAuth polling errore: %s", error)
+                    break
+                except Exception as exc:
+                    _LOGGER.warning("OAuth polling exception: %s", exc)
+                    await asyncio.sleep(2)
+
+        if token_data.get("access_token"):
+            # Salva token nel config entry data
+            token_data["obtained_at"] = time.time()
+            self._user_input["_google_token"] = json.dumps(token_data)
+            # Pulisci dati temporanei
+            self._user_input.pop("_device_code", None)
+            self._user_input.pop("_device_code_secret", None)
+            _LOGGER.info("Google OAuth completato con successo")
+            return self._create_entry()
+
+        # Token non ottenuto: mostra errore ma permetti di procedere senza
+        return self.async_show_form(
+            step_id="google_oauth_poll",
+            data_schema=vol.Schema({
+                vol.Required("retry", default="retry"): vol.In({
+                    "retry": "Riprova (ho appena autorizzato)",
+                    "skip": "Salta (configura My Maps in seguito)",
+                }),
+            }),
+            description_placeholders={
+                "error": (
+                    "Autorizzazione non ancora ricevuta o scaduta.\n"
+                    "Assicurati di aver completato l'autorizzazione su Google, "
+                    "poi clicca 'Riprova'."
+                )
+            },
+            errors={"base": "oauth_pending"},
+        )
+
+    async def async_step_google_oauth_poll_submit(
+        self, user_input: Optional[dict[str, Any]] = None
+    ) -> FlowResult:
+        """Gestisce la scelta retry/skip dal form di polling."""
+        if user_input and user_input.get("retry") == "skip":
+            self._user_input[CONF_EXPORT_MYMAPS] = False
+            return self._create_entry()
+        return await self.async_step_google_oauth_poll()
 
     # ------------------------------------------------------------------ #
     #  Options Flow (modifica configurazione esistente)                   #

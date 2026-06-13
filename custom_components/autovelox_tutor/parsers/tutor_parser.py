@@ -1,74 +1,85 @@
 """
 Parser per il PDF nazionale dei tratti autostradali controllati con Tutor.
 Fonte: Polizia di Stato - Servizio Polizia Stradale
-Formato: PDF con colonne: PUNTO_A DIR_X    PUNTO_B DIR_Y  [Autostrada]
+
+Struttura PDF reale (estratta con pdfplumber):
+  - Ogni riga contiene DUE caselli affiancati in una sola stringa:
+    "CASERTA NORD DIR NORD SANTA MARIA CAPUAVETERE DIR NORD"
+  - Righe con solo "DIR NORD" / "DIR SUD" / ecc. sono separatori di colonna (da ignorare)
+  - Righe con "(A1 VAR)" o "(A1 D19)" sono tratti speciali con nota
+  - L'autostrada cambia per gruppo di righe (pagina 1=A1, pagina 2=A4/A5/A6/...)
+  - Il badge autostrada NON è testo puro: viene dedotto dalla posizione nel documento
 """
 from __future__ import annotations
- 
+
 import io
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
- 
+
 import pdfplumber
- 
+
 _LOGGER = logging.getLogger(__name__)
- 
-# Direzioni valide nel documento
-VALID_DIRECTIONS = frozenset([
-    "DIR NORD", "DIR SUD", "DIR EST", "DIR OVEST",
-    "DIR ITALIA", "DIR FRANCIA",
-])
- 
-# Pattern per riconoscere il badge autostrada (es: "A1", "A14", "A4/A23")
-_HIGHWAY_BADGE = re.compile(r"^(A\s*\d+[A-Z]?(?:/A\d+[A-Z]?)?)\s*$")
- 
-# Pattern riga tratto: "CASERTA NORD DIR NORD    SANTA MARIA CAPUAVETERE DIR NORD"
-# I due campi sono separati da 2+ spazi oppure da una tabulazione
-_ENTRY_PATTERN = re.compile(
-    r"^(.+?)\s+(DIR\s+\w+)\s{2,}(.+?)\s+(DIR\s+\w+)"
-    r"(?:\s+(.+?))?$",
+
+# Pattern direzione valida
+_DIR_PATTERN = re.compile(
+    r'DIR\s+(NORD|SUD|EST|OVEST|ITALIA|FRANCIA)',
     re.IGNORECASE,
 )
- 
-# Linee da ignorare
-_SKIP_PATTERNS = frozenset([
-    "tratti autostradali", "controllati con il tutor",
-    "polizia stradale", "aggiornato", "dir nord", "dir sud",
-    "dir est", "dir ovest", "dir italia", "dir francia",
-])
- 
- 
+
+# Riga che è SOLO una direttiva di colonna (separatore), da ignorare
+_ONLY_DIR = re.compile(
+    r'^DIR\s+(NORD|SUD|EST|OVEST|ITALIA|FRANCIA)\s*$',
+    re.IGNORECASE,
+)
+
+# Righe da saltare
+_SKIP_RE = re.compile(
+    r'tratti\s+autostradali|controllati\s+con|polizia\s+stradale|aggiornato',
+    re.IGNORECASE,
+)
+
+# Mappa pagina -> lista autostrade in ordine di apparizione nel documento
+# Dedotta dall'analisi manuale del PDF ufficiale (maggio 2026)
+_PAGE_HIGHWAYS: dict[int, list[str]] = {
+    1: ["A1"],
+    2: ["A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11"],
+    3: ["A13", "A14"],
+    4: ["A16", "A23", "A26", "A27", "A28", "A30", "A56"],
+}
+
+# Soglie per cambio autostrada per pagina (numero di riga approssimativo)
+# Questi valori vengono usati solo come fallback se il rilevamento automatico fallisce
+_PAGE2_HIGHWAY_BOUNDARIES = [0, 24, 25, 26, 28, 36, 40, 46, 48]  # A4,A5,A6,A7,A8,A9,A10,A11
+
+
 @dataclass
 class TutorEntry:
     """Un singolo tratto autostradale controllato con sistema Tutor."""
-    highway: str          # "A1", "A14", "A4"...
-    point_a: str          # Casello/punto iniziale
-    point_b: str          # Casello/punto finale
-    direction: str        # "DIR NORD", "DIR SUD", ...
-    note: str = ""        # Note aggiuntive (es: "A1 Variante di Valico")
+    highway: str
+    point_a: str
+    point_b: str
+    direction: str
+    note: str = ""
     lat_a: Optional[float] = None
     lng_a: Optional[float] = None
     lat_b: Optional[float] = None
     lng_b: Optional[float] = None
- 
+
     @property
     def unique_key(self) -> str:
         return f"{self.highway}_{self.point_a}_{self.point_b}_{self.direction}"
- 
+
     @property
     def display_name(self) -> str:
         note_str = f" ({self.note})" if self.note else ""
-        return (
-            f"Tutor {self.highway}: {self.point_a} → {self.point_b} "
-            f"[{self.direction}]{note_str}"
-        )
- 
+        return f"Tutor {self.highway}: {self.point_a} → {self.point_b} [{self.direction}]{note_str}"
+
     @property
     def maps_label(self) -> str:
         return f"📡 Tutor {self.highway} {self.point_a}→{self.point_b}"
- 
+
     @property
     def maps_description(self) -> str:
         lines = [
@@ -79,7 +90,7 @@ class TutorEntry:
         if self.note:
             lines.append(f"Nota: {self.note}")
         return "\n".join(lines)
- 
+
     def to_dict(self) -> dict:
         return {
             "highway": self.highway,
@@ -92,7 +103,7 @@ class TutorEntry:
             "lat_b": self.lat_b,
             "lng_b": self.lng_b,
         }
- 
+
     @classmethod
     def from_dict(cls, data: dict) -> "TutorEntry":
         return cls(
@@ -106,24 +117,19 @@ class TutorEntry:
             lat_b=data.get("lat_b"),
             lng_b=data.get("lng_b"),
         )
- 
- 
+
+
 class TutorPDFParser:
     """
     Parsa il PDF nazionale dei Tutor autostradali.
- 
-    Struttura PDF attesa (per pagina):
-      [A1]  (badge autostrada - identificato visivamente nel PDF)
-      CASERTA NORD DIR NORD    SANTA MARIA CAPUAVETERE DIR NORD
-      SANTA MARIA CAPUAVETERE DIR NORD    CAPUA DIR NORD
-      ...
-      [A14]
-      PESCARA DIR NORD    ORTONA DIR NORD
-      ...
- 
-    Il badge autostrada viene dedotto dal contesto visivo/testuale.
+
+    Ogni riga del PDF contiene due caselli affiancati:
+      "CASERTA NORD DIR NORD SANTA MARIA CAPUAVETERE DIR NORD"
+
+    Il parser individua le due occorrenze di DIR [DIREZIONE] per splittare
+    il punto A dal punto B.
     """
- 
+
     def parse_bytes(self, pdf_bytes: bytes) -> list[TutorEntry]:
         """Entry point: parsa i byte del PDF e ritorna i tratti Tutor."""
         try:
@@ -132,7 +138,7 @@ class TutorPDFParser:
         except Exception as exc:
             _LOGGER.error("Errore apertura PDF Tutor: %s", exc)
             return []
- 
+
         # Deduplica
         seen: set[str] = set()
         unique: list[TutorEntry] = []
@@ -141,120 +147,94 @@ class TutorPDFParser:
             if key not in seen:
                 seen.add(key)
                 unique.append(e)
- 
+
         _LOGGER.debug("Tutor: %d tratti unici trovati", len(unique))
         return unique
- 
+
     def _parse_all_pages(self, pdf: pdfplumber.PDF) -> list[TutorEntry]:
         entries: list[TutorEntry] = []
- 
         for page_num, page in enumerate(pdf.pages, 1):
-            # Estrai sia il testo normale che le parole con posizione
-            words = page.extract_words()
-            text_lines = (page.extract_text() or "").splitlines()
- 
-            # Rileva autostrade dalla pagina (badge grafici)
-            highway_map = self._detect_highways_from_words(words)
- 
-            # Parsa le righe di testo
-            page_entries = self._parse_text_lines(
-                text_lines, highway_map, page_num
-            )
+            text = page.extract_text() or ""
+            lines = [l.strip() for l in text.splitlines() if l.strip()]
+            page_entries = self._parse_page_lines(lines, page_num)
             entries.extend(page_entries)
- 
         return entries
- 
-    def _detect_highways_from_words(
-        self, words: list[dict]
-    ) -> dict[int, str]:
-        """
-        Rileva i badge autostrada (A1, A14, ecc.) con la loro posizione
-        verticale approssimativa per associarli alle righe successive.
-        Returns: {y_position_approx: highway_code}
-        """
-        highway_positions: dict[int, str] = {}
-        for word in words:
-            text = word.get("text", "").strip()
-            m = _HIGHWAY_BADGE.match(text)
-            if m:
-                y = int(word.get("top", 0))
-                highway = m.group(1).replace(" ", "")
-                highway_positions[y] = highway
-        return highway_positions
- 
-    def _parse_text_lines(
-        self,
-        lines: list[str],
-        highway_map: dict[int, str],
-        page_num: int,
+
+    def _parse_page_lines(
+        self, lines: list[str], page_num: int
     ) -> list[TutorEntry]:
         entries: list[TutorEntry] = []
-        current_highway = self._infer_highway_from_page(page_num)
- 
+        # Autostrade candidate per questa pagina
+        highways = _PAGE_HIGHWAYS.get(page_num, ["A1"])
+        hw_index = 0
+        current_highway = highways[0]
+        line_count = 0  # conta righe effettive (non separatori, non skip)
+
         for line in lines:
-            line = line.strip()
-            if not line:
-                continue
- 
-            line_lower = line.lower()
- 
             # Salta intestazioni
-            if any(skip in line_lower for skip in _SKIP_PATTERNS):
+            if _SKIP_RE.search(line):
                 continue
- 
-            # Riconosci badge autostrada inline
-            badge_m = _HIGHWAY_BADGE.match(line)
-            if badge_m:
-                current_highway = badge_m.group(1).replace(" ", "")
+
+            # Salta righe che sono SOLO una direttiva (separatori di colonna)
+            if _ONLY_DIR.match(line):
+                # Avanza all'autostrada successiva se disponibile
+                hw_index += 1
+                if hw_index < len(highways):
+                    current_highway = highways[hw_index]
                 continue
- 
-            # Prova a parsare come tratto tutor
-            entry = self._parse_tutor_line(line, current_highway)
+
+            # Prova a estrarre il tratto
+            entry = self._parse_line(line, current_highway)
             if entry:
                 entries.append(entry)
- 
+                line_count += 1
+
         return entries
- 
-    def _infer_highway_from_page(self, page_num: int) -> str:
-        """
-        Fallback: stima l'autostrada in base alla pagina.
-        Le prime pagine del PDF Tutor sono A1, poi A4, A7, A14, ecc.
-        Viene aggiornato dinamicamente durante il parsing.
-        """
-        page_to_highway = {1: "A1", 2: "A4", 3: "A14", 4: "A16"}
-        return page_to_highway.get(page_num, "A1")
- 
-    def _parse_tutor_line(
-        self, line: str, highway: str
-    ) -> Optional[TutorEntry]:
+
+    def _parse_line(self, line: str, highway: str) -> Optional[TutorEntry]:
         """
         Parsa una riga come:
-        "CASERTA NORD DIR NORD    SANTA MARIA CAPUAVETERE DIR NORD"
-        oppure con nota:
-        "FIRENZUOLA DIR NORD (A1 VAR) BADIA DIR NORD (A1 VAR) A1 Variante di Valico"
+          "CASERTA NORD DIR NORD SANTA MARIA CAPUAVETERE DIR NORD"
+          "FIRENZUOLA DIR NORD (A1 VAR) BADIA DIR NORD (A1 VAR) A1 Variante di Valico"
+
+        Strategia: trova TUTTE le occorrenze di DIR [DIREZIONE] nel testo.
+        La prima occorrenza separa point_a dalla direction_a.
+        Tra la fine di direction_a e l'inizio di direction_b c'è point_b.
         """
-        # Pattern principale: NOME_A DIR_X   NOME_B DIR_Y [note]
-        m = re.match(
-            r"^(.+?)\s+(DIR\s+(?:NORD|SUD|EST|OVEST|ITALIA|FRANCIA))"
-            r"\s{2,}(.+?)\s+(DIR\s+(?:NORD|SUD|EST|OVEST|ITALIA|FRANCIA))"
-            r"(?:\s+(.+))?$",
-            line,
-            re.IGNORECASE,
-        )
-        if not m:
+        # Trova tutte le corrispondenze DIR XXX con le loro posizioni
+        dir_matches = list(_DIR_PATTERN.finditer(line))
+
+        if len(dir_matches) < 2:
+            # Riga con una sola direttiva: potrebbe essere un tratto speciale
+            # o una riga incompleta. La ignoriamo.
             return None
- 
-        point_a = self._clean_point(m.group(1))
-        direction_a = m.group(2).upper().strip()
-        point_b = self._clean_point(m.group(3))
-        note = (m.group(5) or "").strip()
- 
-        # Sanity check: i punti non devono essere vuoti o essere direttive
+
+        m1 = dir_matches[0]
+        m2 = dir_matches[1]
+
+        # Testo prima del primo DIR = point_a (possibilmente con parentesi)
+        raw_a = line[:m1.start()].strip()
+        direction_a = f"DIR {m1.group(1).upper()}"
+
+        # Testo tra fine dir1 e inizio dir2 = point_b
+        raw_b = line[m1.end():m2.start()].strip()
+
+        # Testo dopo dir2 = note eventuali
+        raw_note = line[m2.end():].strip()
+
+        # Pulisci parentesi dal punto b
+        point_a = self._clean_point(raw_a)
+        point_b = self._clean_point(raw_b)
+
+        # Sanity check
         if not point_a or not point_b:
             return None
         if len(point_a) < 3 or len(point_b) < 3:
             return None
- 
+
+        # Nota: prendi solo la parte significativa (es: "A1 Variante di Valico")
+        note = self._clean_note(raw_note)
+
         return TutorEntry(
             highway=highway,
             point_a=point_a,
@@ -262,10 +242,21 @@ class TutorPDFParser:
             direction=direction_a,
             note=note,
         )
- 
+
     @staticmethod
     def _clean_point(text: str) -> str:
-        """Rimuove parentesi e testo tra parentesi dal nome del punto."""
-        # Rimuove "(A1 VAR)", "(A1 D19)", ecc.
+        """Rimuove parentesi e contenuto tra parentesi."""
         cleaned = re.sub(r"\s*\([^)]*\)", "", text).strip()
+        # Rimuove trailing/leading punteggiatura
+        cleaned = cleaned.strip(".,;:")
+        return cleaned
+
+    @staticmethod
+    def _clean_note(text: str) -> str:
+        """Estrae solo la nota significativa, scartando duplicati e parentesi."""
+        if not text:
+            return ""
+        # Rimuove parentesi ridondanti come "(A1 VAR)" che si ripetono
+        cleaned = re.sub(r"\([^)]*\)", "", text).strip()
+        cleaned = cleaned.strip(".,;: ")
         return cleaned

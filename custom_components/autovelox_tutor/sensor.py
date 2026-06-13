@@ -63,7 +63,7 @@ async def async_setup_entry(
     entities: list[SensorEntity] = []
 
     # Sensore riepilogo globale
-    entities.append(AutoveloxSummarysensor(coordinator, entry))
+    entities.append(AutoveloxSummarySensor(coordinator, entry))
 
     # Sensori per regione
     for region in regions:
@@ -95,7 +95,7 @@ def _device_info(entry: ConfigEntry) -> DeviceInfo:
 #  Sensore riepilogo globale                                                   #
 # --------------------------------------------------------------------------- #
 
-class AutoveloxSummaryensor(CoordinatorEntity, SensorEntity):
+class AutoveloxSummarySensor(CoordinatorEntity, SensorEntity):
     """Sensore riepilogo: mostra conteggio totale velox + tutor."""
 
     _attr_icon = "mdi:car-speed-limiter"

@@ -1,0 +1,27 @@
+aggiorna:
+  name: Aggiorna dati
+  description: Forza un aggiornamento immediato dei dati autovelox e tutor dalla Polizia di Stato.
+  fields:
+    region:
+      name: Regione
+      description: "Regione specifica da aggiornare (opzionale). Esempi: marche, lazio, lombardia. Se omesso, aggiorna tutte le regioni configurate."
+      required: false
+      example: "marche"
+      selector:
+        text:
+
+scarica_kml:
+  name: Scarica KML
+  description: "Genera un file KML con tutti i punti velox e tutor. Il file viene salvato in /config/www/autovelox_[regione].kml e scaricabile da http://TUO-HA/local/autovelox_[regione].kml"
+  fields:
+    region:
+      name: Regione
+      description: "Regione per cui generare il KML. Esempi: marche, lazio, lombardia."
+      required: true
+      example: "marche"
+      selector:
+        text:
+
+esporta_mymaps:
+  name: Esporta su Google My Maps
+  description: "Forza l'esportazione di tutti i punti su Google My Maps. Richiede autenticazione Google configurata."

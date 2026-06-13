@@ -35,6 +35,13 @@
         "title": "Google Authorization",
         "description": "{instructions}",
         "data": {}
+      },
+      "google_oauth_poll": {
+        "title": "Verify authorization",
+        "description": "{error}",
+        "data": {
+          "retry": "What do you want to do?"
+        }
       }
     },
     "error": {

@@ -1,8 +1,8 @@
 """Costanti per l'integrazione Autovelox & Tutor Italia."""
- 
+
 DOMAIN = "autovelox_tutor"
 INTEGRATION_VERSION = "1.0.0"
- 
+
 # --- Configurazione ---
 CONF_REGIONS = "regions"
 CONF_GEOCODING_PROVIDER = "geocoding_provider"
@@ -11,24 +11,24 @@ CONF_GOOGLE_TOKEN = "google_token"
 CONF_UPDATE_DAY = "update_day"
 CONF_UPDATE_HOUR = "update_hour"
 CONF_EXPORT_MYMAPS = "export_mymaps"
- 
+
 # --- Provider geocoding ---
 GEO_PROVIDER_OSM = "openstreetmap"
 GEO_PROVIDER_GOOGLE = "google"
 GEO_PROVIDER_BOTH = "both"
- 
+
 # --- URL sorgenti ---
 VELOX_BASE_URL = "https://www.poliziadistato.it/statics/34/"
 TUTOR_PDF_URL = "https://www.poliziadistato.it/statics/19/elenco-tratti-controllati-con-il-tutor-maggio-2026.pdf"
 TUTOR_ARTICLE_URL = "https://www.poliziadistato.it/articolo/51"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
- 
+
 # --- Google OAuth2 ---
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_MAPS_SCOPE = "https://www.googleapis.com/auth/mymaps"
- 
+
 # Headers per non essere bloccati dal sito Polizia di Stato
 HTTP_HEADERS = {
     "User-Agent": (
@@ -40,7 +40,7 @@ HTTP_HEADERS = {
     "Accept-Language": "it-IT,it;q=0.9",
     "Referer": "https://www.poliziadistato.it/",
 }
- 
+
 # --- Mappa regione → nome file PDF velox ---
 REGION_PDF_MAP = {
     "abruzzo": "abruzzo.pdf",
@@ -64,7 +64,7 @@ REGION_PDF_MAP = {
     "valle_daosta": "valle-daosta.pdf",
     "veneto": "veneto.pdf",
 }
- 
+
 # Nomi leggibili per la UI
 REGION_DISPLAY_NAMES = {
     "abruzzo": "Abruzzo",
@@ -88,7 +88,7 @@ REGION_DISPLAY_NAMES = {
     "valle_daosta": "Valle d'Aosta",
     "veneto": "Veneto",
 }
- 
+
 # --- Giorni settimana ---
 WEEKDAY_OPTIONS = {
     "lunedi": 0,
@@ -99,7 +99,7 @@ WEEKDAY_OPTIONS = {
     "sabato": 5,
     "domenica": 6,
 }
- 
+
 WEEKDAY_DISPLAY = {
     "lunedi": "Lunedì",
     "martedi": "Martedì",
@@ -109,7 +109,7 @@ WEEKDAY_DISPLAY = {
     "sabato": "Sabato",
     "domenica": "Domenica",
 }
- 
+
 # --- Codici provincia per validazione ---
 PROVINCE_CODES = {
     # Abruzzo
@@ -153,7 +153,7 @@ PROVINCE_CODES = {
     # Veneto
     "BL", "PD", "RO", "TV", "VE", "VR", "VI",
 }
- 
+
 # --- Attributi entità HA ---
 ATTR_ROAD_TYPE = "tipo_strada"
 ATTR_ROAD_NAME = "nome_strada"
@@ -172,13 +172,13 @@ ATTR_LAST_UPDATE = "ultimo_aggiornamento"
 ATTR_TOTAL_VELOX = "totale_velox"
 ATTR_TOTAL_TUTOR = "totale_tutor"
 ATTR_MYMAPS_URL = "url_mia_mappa"
- 
+
 # --- Nomi sensori ---
 SENSOR_VELOX_COUNT = "velox_attivi"
 SENSOR_TUTOR_COUNT = "tutor_attivi"
 SENSOR_LAST_UPDATE = "ultimo_aggiornamento"
 SENSOR_MYMAPS_URL = "url_google_mymaps"
- 
+
 # --- Cache ---
 CACHE_FILE_VELOX = "autovelox_tutor_velox_cache.json"
 CACHE_FILE_TUTOR = "autovelox_tutor_tutor_cache.json"

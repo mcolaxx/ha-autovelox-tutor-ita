@@ -4,25 +4,25 @@ Fonte: Polizia di Stato - Servizio Polizia Stradale
 Formato: PDF con tabella Giorno / Tratto stradale / Provincia
 """
 from __future__ import annotations
- 
+
 import io
 import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
- 
+
 import pdfplumber
- 
+
 _LOGGER = logging.getLogger(__name__)
- 
+
 # Mese italiano → numero
 MONTHS_IT: dict[str, int] = {
     "gennaio": 1, "febbraio": 2, "marzo": 3, "aprile": 4,
     "maggio": 5, "giugno": 6, "luglio": 7, "agosto": 8,
     "settembre": 9, "ottobre": 10, "novembre": 11, "dicembre": 12,
 }
- 
+
 # Prefissi che indicano il tipo di strada nel PDF
 ROAD_TYPE_PREFIXES: list[tuple[str, str]] = [
     ("raccordo autostradale", "Raccordo Autostradale"),
@@ -32,7 +32,7 @@ ROAD_TYPE_PREFIXES: list[tuple[str, str]] = [
     ("strada regionale", "Strada Regionale"),
     ("strada comunale", "Strada Comunale"),
 ]
- 
+
 # Parole da ignorare nel parsing (intestazioni, footer, ecc.)
 SKIP_KEYWORDS = frozenset([
     "fonte:", "polizia di stato", "servizio polizia stradale",
@@ -42,8 +42,8 @@ SKIP_KEYWORDS = frozenset([
     "molise", "piemonte", "puglia", "sardegna", "sicilia", "toscana",
     "trentino", "umbria", "valle", "veneto", "regione",
 ])
- 
- 
+
+
 @dataclass
 class VeloxEntry:
     """Un singolo punto/tratto di controllo autovelox."""
@@ -56,21 +56,21 @@ class VeloxEntry:
     day: Optional[date] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
- 
+
     @property
     def unique_key(self) -> str:
         """Chiave univoca per deduplicazione e cache geocoding."""
         return f"{self.road_name.strip()}_{self.province}"
- 
+
     @property
     def display_name(self) -> str:
         return f"Velox {self.road_type} {self.road_name} ({self.province})"
- 
+
     @property
     def maps_label(self) -> str:
         """Etichetta per Google My Maps."""
         return f"🚔 Velox {self.road_name} ({self.province})"
- 
+
     @property
     def maps_description(self) -> str:
         return (
@@ -79,7 +79,7 @@ class VeloxEntry:
             f"Provincia: {self.province}\n"
             f"Validità: {self.valid_from} → {self.valid_to}"
         )
- 
+
     def to_dict(self) -> dict:
         return {
             "road_type": self.road_type,
@@ -92,7 +92,7 @@ class VeloxEntry:
             "lat": self.lat,
             "lng": self.lng,
         }
- 
+
     @classmethod
     def from_dict(cls, data: dict) -> "VeloxEntry":
         return cls(
@@ -106,16 +106,16 @@ class VeloxEntry:
             lat=data.get("lat"),
             lng=data.get("lng"),
         )
- 
- 
+
+
 class VeloxPDFParser:
     """
     Parsa i PDF settimanali degli autovelox regionali.
- 
+
     Struttura PDF attesa:
       Validità da lunedì 8 giugno 2026 a domenica 14 giugno 2026
       Giorno | Tratto stradale | Provincia
- 
+
       08/06/2026
         Autostrada          A/14 Bologna-Taranto    PU
         Raccordo Autostr.   RA/11 Ascoli-...        AP
@@ -124,16 +124,16 @@ class VeloxPDFParser:
       09/06/2026
         ...
     """
- 
+
     # Pattern data giornaliera: "08/06/2026"
     _DATE_PATTERN = re.compile(r"^(\d{2})/(\d{2})/(\d{4})\s*$")
- 
+
     # Pattern 2 lettere maiuscole a fine riga = codice provincia
     _PROVINCE_PATTERN = re.compile(r"^(.+?)\s+([A-Z]{2})\s*$")
- 
+
     def __init__(self, region: str) -> None:
         self.region = region
- 
+
     def parse_bytes(self, pdf_bytes: bytes) -> list[VeloxEntry]:
         """Entry point: accetta i byte del PDF e ritorna la lista dei controlli."""
         try:
@@ -146,10 +146,10 @@ class VeloxPDFParser:
         except Exception as exc:
             _LOGGER.error("Errore apertura PDF velox %s: %s", self.region, exc)
             return []
- 
+
         valid_from, valid_to = self._extract_validity(lines)
         entries = self._parse_lines(lines, valid_from, valid_to)
- 
+
         # Deduplica: stesso tratto/provincia nello stesso periodo
         seen: set[str] = set()
         unique: list[VeloxEntry] = []
@@ -158,17 +158,17 @@ class VeloxPDFParser:
             if key not in seen:
                 seen.add(key)
                 unique.append(e)
- 
+
         _LOGGER.debug(
             "Velox %s: %d voci uniche trovate (su %d totali)",
             self.region, len(unique), len(entries),
         )
         return unique
- 
+
     # ------------------------------------------------------------------ #
     #  Metodi privati                                                      #
     # ------------------------------------------------------------------ #
- 
+
     def _extract_validity(
         self, lines: list[str]
     ) -> tuple[Optional[date], Optional[date]]:
@@ -196,7 +196,7 @@ class VeloxPDFParser:
             except ValueError as exc:
                 _LOGGER.warning("Parsing date validità fallito: %s", exc)
         return None, None
- 
+
     def _parse_lines(
         self,
         lines: list[str],
@@ -206,17 +206,17 @@ class VeloxPDFParser:
         entries: list[VeloxEntry] = []
         current_road_type: Optional[str] = None
         current_day: Optional[date] = None
- 
+
         for raw_line in lines:
             line = raw_line.strip()
             if not line:
                 continue
- 
+
             # Salta intestazioni e footer
             line_lower = line.lower()
             if any(kw in line_lower for kw in SKIP_KEYWORDS):
                 continue
- 
+
             # --- Data giornaliera ---
             date_m = self._DATE_PATTERN.match(line)
             if date_m:
@@ -229,7 +229,7 @@ class VeloxPDFParser:
                 except ValueError:
                     pass
                 continue
- 
+
             # --- Tipo di strada ---
             matched_type: Optional[str] = None
             remainder = line
@@ -239,15 +239,15 @@ class VeloxPDFParser:
                     current_road_type = canonical
                     remainder = line[len(prefix):].strip()
                     break
- 
+
             # Se la riga era SOLO il tipo di strada, vai avanti
             if matched_type and not remainder:
                 continue
- 
+
             # Lavora sul testo rimanente (o su tutta la riga se no match tipo)
             if not current_road_type:
                 continue
- 
+
             entry = self._extract_entry(
                 remainder if matched_type else line,
                 current_road_type,
@@ -257,9 +257,9 @@ class VeloxPDFParser:
             )
             if entry:
                 entries.append(entry)
- 
+
         return entries
- 
+
     def _extract_entry(
         self,
         text: str,
@@ -276,20 +276,20 @@ class VeloxPDFParser:
         m = self._PROVINCE_PATTERN.match(text.strip())
         if not m:
             return None
- 
+
         road_name = m.group(1).strip()
         province = m.group(2).strip()
- 
+
         # Filtra codici che non sono province reali
         # (es. "DI", "SS" come abbreviazione strada, ecc.)
-        from .const import PROVINCE_CODES
+        from ..const import PROVINCE_CODES
         if province not in PROVINCE_CODES:
             return None
- 
+
         # Filtra nomi strade troppo corti o che sembrano direttive
         if len(road_name) < 3:
             return None
- 
+
         return VeloxEntry(
             road_type=road_type,
             road_name=road_name,
